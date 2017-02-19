@@ -1,0 +1,82 @@
+<?xml version="1.0" ?>
+
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one or more
+ contributor license agreements.  See the NOTICE file distributed with
+ this work for additional information regarding copyright ownership.
+ The ASF licenses this file to You under the Apache License, Version 2.0
+ (the "License"); you may not use this file except in compliance with
+ the License.  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<!--
+   Test Config that enumerates atomic update processor chain 
+   configurations.
+  -->
+<config>
+  <luceneMatchVersion>${tests.luceneMatchVersion:LATEST}</luceneMatchVersion>
+  <requestHandler name="standard" class="solr.StandardRequestHandler"></requestHandler>
+  <directoryFactory name="DirectoryFactory" class="${solr.directoryFactory:solr.RAMDirectoryFactory}"/>
+
+  <schemaFactory class="ClassicIndexSchemaFactory"/>
+  
+  <!-- processor definition for 'add' 'set' 'remove' 'inc' atomic operations -->
+  <updateRequestProcessorChain name="basic-0-atomic-processor">
+    <processor class="solr.AtomicUpdateProcessorFactory">
+      <str name="cat">add</str>
+      <str name="subject">set</str>
+      <str name="sindsto">remove</str>
+      <str name="count_i">inc</str>
+    </processor>
+    <processor class="solr.LogUpdateProcessorFactory" />
+    <processor class="solr.RunUpdateProcessorFactory" />
+  </updateRequestProcessorChain>
+  
+  <!-- processor definition for field not defined in schema.xml -->
+  <updateRequestProcessorChain name="basic-1-atomic-processor">
+    <processor class="solr.AtomicUpdateProcessorFactory">
+      <str name="random">set</str>
+    </processor>
+    <processor class="solr.LogUpdateProcessorFactory" />
+    <processor class="solr.RunUpdateProcessorFactory" />
+  </updateRequestProcessorChain>
+  
+  <!-- processor definition for 'removeregex' atomic operation -->
+  <updateRequestProcessorChain name="basic-2-atomic-processor">
+    <processor class="solr.AtomicUpdateProcessorFactory">
+      <str name="cat">removeregex</str>
+    </processor>
+    <processor class="solr.LogUpdateProcessorFactory" />
+    <processor class="solr.RunUpdateProcessorFactory" />
+  </updateRequestProcessorChain>
+  
+  <!-- processor definition for direct conventional documents update -->
+  <updateRequestProcessorChain name="basic-processor">
+    <processor class="solr.LogUpdateProcessorFactory" />
+    <processor class="solr.DistributedUpdateProcessorFactory" />
+    <processor class="solr.RunUpdateProcessorFactory" />
+  </updateRequestProcessorChain>
+
+  <!-- registering update </updateLog> for atomic operations -->
+  <updateHandler class="solr.DirectUpdateHandler2">
+  	<autoCommit>
+   		<maxTime>15000</maxTime>
+   		<openSearcher>false</openSearcher>
+  	</autoCommit>
+  	<autoSoftCommit>
+   		<maxTime>1000</maxTime>
+  	</autoSoftCommit>
+  	<updateLog>
+   		<str name="dir">${solr.data.dir:}</str>
+  	</updateLog>
+  </updateHandler>
+  
+</config>
