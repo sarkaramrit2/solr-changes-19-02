@@ -76,6 +76,7 @@ public interface HighlightParams {
   public static final String TAG_POST    = HIGHLIGHT + ".tag.post"; // FVH, UH, PH
   public static final String TAG_ELLIPSIS= HIGHLIGHT + ".tag.ellipsis"; // FVH, UH, PH
   public static final String MULTI_VALUED_SEPARATOR = HIGHLIGHT + ".multiValuedSeparatorChar"; // FVH, PH
+  public static final String CUSTOM_SEPERATOR = HIGHLIGHT + ".customSeparatorChar";
 
   // ordering
   public static final String PRESERVE_MULTI = HIGHLIGHT+".preserveMulti"; // OH

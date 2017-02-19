@@ -26,6 +26,7 @@ import java.util.Set;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.postingshighlight.CustomSeparatorBreakIterator;
 import org.apache.lucene.search.postingshighlight.DefaultPassageFormatter;
 import org.apache.lucene.search.postingshighlight.Passage;
 import org.apache.lucene.search.postingshighlight.PassageFormatter;
@@ -239,12 +240,19 @@ public class PostingsSolrHighlighter extends SolrHighlighter implements PluginIn
 
     @Override
     protected BreakIterator getBreakIterator(String field) {
-      String language = params.getFieldParam(field, HighlightParams.BS_LANGUAGE);
-      String country = params.getFieldParam(field, HighlightParams.BS_COUNTRY);
-      String variant = params.getFieldParam(field, HighlightParams.BS_VARIANT);
-      Locale locale = parseLocale(language, country, variant);
       String type = params.getFieldParam(field, HighlightParams.BS_TYPE);
-      return parseBreakIterator(type, locale);
+      if(type != null  && type.equals("WHOLE")){
+        return new WholeBreakIterator();
+      }else if(type != null  && type.equals("CUSTOM")){ 
+        char customsep = validateAndGetChar(params.getFieldParam(field,HighlightParams.CUSTOM_SEPERATOR));
+        return new CustomSeparatorBreakIterator(customsep);
+      }else{
+        String language = params.getFieldParam(field, HighlightParams.BS_LANGUAGE);
+        String country = params.getFieldParam(field, HighlightParams.BS_COUNTRY);
+        String variant = params.getFieldParam(field, HighlightParams.BS_VARIANT);
+        Locale locale = parseLocale(language, country, variant);
+        return parseBreakIterator(type, locale);
+      }
     }
 
     @Override
@@ -276,8 +284,6 @@ public class PostingsSolrHighlighter extends SolrHighlighter implements PluginIn
       return BreakIterator.getWordInstance(locale);
     } else if ("CHARACTER".equals(type)) {
       return BreakIterator.getCharacterInstance(locale);
-    } else if ("WHOLE".equals(type)) {
-      return new WholeBreakIterator();
     } else {
       throw new IllegalArgumentException("Unknown " + HighlightParams.BS_TYPE + ": " + type);
     }
@@ -296,5 +302,15 @@ public class PostingsSolrHighlighter extends SolrHighlighter implements PluginIn
     } else { 
       return new Locale(language);
     }
+  }
+  
+  /** parse custom separator char for CustomSeparatorBreakIterator */
+  protected char validateAndGetChar(String fieldValue){
+    if(fieldValue ==null || fieldValue.length()<=0)
+      throw new IllegalArgumentException(HighlightParams.CUSTOM_SEPERATOR + " not passed");
+    if(fieldValue.length()>1)
+      throw new IllegalArgumentException("Only single char allowed for " + HighlightParams.CUSTOM_SEPERATOR + 
+          ", passed: '" + fieldValue+"'");
+    return fieldValue.charAt(0);      
   }
 }

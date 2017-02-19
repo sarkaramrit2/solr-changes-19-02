@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
  * Can set the following parameters:
  * <ul>
  *  <li>unmap -- See {@link MMapDirectory#setUseUnmap(boolean)}</li>
+ *  <li>preload -- See {@link MMapDirectory#setPreload(boolean)}</li>
  *  <li>maxChunkSize -- The Max chunk size.  See {@link MMapDirectory#MMapDirectory(Path, LockFactory, int)}</li>
  * </ul>
  *
@@ -42,6 +43,7 @@ import org.slf4j.LoggerFactory;
 public class MMapDirectoryFactory extends StandardDirectoryFactory {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   boolean unmapHack;
+  boolean preload;
   private int maxChunk;
 
   @Override
@@ -53,6 +55,7 @@ public class MMapDirectoryFactory extends StandardDirectoryFactory {
       throw new IllegalArgumentException("maxChunk must be greater than 0");
     }
     unmapHack = params.getBool("unmap", true);
+    preload = params.getBool("preload", false); //default turn-off
   }
 
   @Override
@@ -63,6 +66,11 @@ public class MMapDirectoryFactory extends StandardDirectoryFactory {
       mapDirectory.setUseUnmap(unmapHack);
     } catch (IllegalArgumentException e) {
       log.warn("Unmap not supported on this JVM, continuing on without setting unmap", e);
+    }
+    try {
+      mapDirectory.setPreload(preload);
+    } catch (IllegalArgumentException e) {
+      log.warn("Preload not supported on this JVM, continuing on without setting preload", e);
     }
     return mapDirectory;
   }

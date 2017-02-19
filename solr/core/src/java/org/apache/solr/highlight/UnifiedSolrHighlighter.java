@@ -28,6 +28,7 @@ import java.util.function.Predicate;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.postingshighlight.CustomSeparatorBreakIterator;
 import org.apache.lucene.search.postingshighlight.WholeBreakIterator;
 import org.apache.lucene.search.uhighlight.DefaultPassageFormatter;
 import org.apache.lucene.search.uhighlight.LengthGoalBreakIterator;
@@ -298,22 +299,31 @@ public class UnifiedSolrHighlighter extends SolrHighlighter implements PluginInf
       // Use a default fragsize the same as the regex Fragmenter (original Highlighter) since we're
       //  both likely shooting for sentence-like patterns.
       int fragsize = params.getFieldInt(field, HighlightParams.FRAGSIZE, LuceneRegexFragmenter.DEFAULT_FRAGMENT_SIZE);
-      if (fragsize == 0) { // special value; no fragmenting
+      String type = params.getFieldParam(field, HighlightParams.BS_TYPE);
+      if ((fragsize ==0 || fragsize == 1) || (type!=null && type.equals("WHOLE"))) { // special value; no fragmenting
         return new WholeBreakIterator();
+      }else if(type!=null && type.equals("CUSTOM")){
+        char customsep = validateAndGetChar(params.getFieldParam(field,HighlightParams.CUSTOM_SEPERATOR));
+        return new CustomSeparatorBreakIterator(customsep);
       }
-
       String language = params.getFieldParam(field, HighlightParams.BS_LANGUAGE);
       String country = params.getFieldParam(field, HighlightParams.BS_COUNTRY);
       String variant = params.getFieldParam(field, HighlightParams.BS_VARIANT);
       Locale locale = parseLocale(language, country, variant);
-      String type = params.getFieldParam(field, HighlightParams.BS_TYPE);
       BreakIterator baseBI = parseBreakIterator(type, locale);
 
-      if (fragsize <= 1 || baseBI instanceof WholeBreakIterator) { // no real minimum size
-        return baseBI;
-      }
       return LengthGoalBreakIterator.createMinLength(baseBI, fragsize);
       // TODO option for using createClosestToLength()
+    }
+    
+    /** parse custom separator char for CustomSeparatorBreakIterator */
+    protected char validateAndGetChar(String fieldValue){
+      if(fieldValue ==null || fieldValue.length()<=0)
+        throw new IllegalArgumentException(HighlightParams.CUSTOM_SEPERATOR + " not passed");
+      if(fieldValue.length()>1)
+        throw new IllegalArgumentException("Only single char allowed for " + HighlightParams.CUSTOM_SEPERATOR + 
+            ", passed: '" + fieldValue+"'");
+      return fieldValue.charAt(0);      
     }
 
     /**
@@ -328,8 +338,6 @@ public class UnifiedSolrHighlighter extends SolrHighlighter implements PluginInf
         return BreakIterator.getWordInstance(locale);
       } else if ("CHARACTER".equals(type)) {
         return BreakIterator.getCharacterInstance(locale);
-      } else if ("WHOLE".equals(type)) {
-        return new WholeBreakIterator();
       } else {
         throw new IllegalArgumentException("Unknown " + HighlightParams.BS_TYPE + ": " + type);
       }
