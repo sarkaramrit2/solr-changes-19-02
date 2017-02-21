@@ -259,7 +259,7 @@ public class DirectUpdateHandler2 extends UpdateHandler implements SolrCoreState
 
   private void doNormalUpdate(AddUpdateCommand cmd) throws IOException {
     Term updateTerm;
-    Term idTerm = new Term(cmd.isBlock() ? "_root_" : idField.getName(), cmd.getIndexedId());
+    Term idTerm = getIdTerm(cmd);
     boolean del = false;
     if (cmd.updateTerm == null) {
       updateTerm = idTerm;
@@ -273,12 +273,7 @@ public class DirectUpdateHandler2 extends UpdateHandler implements SolrCoreState
     try {
       IndexWriter writer = iw.get();
 
-      if (cmd.isBlock()) {
-        writer.updateDocuments(updateTerm, cmd);
-      } else {
-        updateDocOrDocValues(cmd, writer, updateTerm);
-      }
-      // SolrCore.verbose("updateDocument",updateTerm,"DONE");
+      updateDocOrDocValues(cmd, writer, updateTerm);
 
       if (del) { // ensure id remains unique
         BooleanQuery.Builder bq = new BooleanQuery.Builder();
@@ -322,8 +317,7 @@ public class DirectUpdateHandler2 extends UpdateHandler implements SolrCoreState
       }
     }
 
-    Document luceneDocument = cmd.getLuceneDocument();
-    Term idTerm = new Term(idField.getName(), cmd.getIndexedId());
+    Term idTerm = getIdTerm(cmd);
 
     RefCounted<IndexWriter> iw = solrCoreState.getIndexWriter(core);
     try {
@@ -333,6 +327,9 @@ public class DirectUpdateHandler2 extends UpdateHandler implements SolrCoreState
       synchronized (solrCoreState.getUpdateLock()) {
         updateDocOrDocValues(cmd, writer, idTerm);
 
+        if (cmd.isInPlaceUpdate() && ulog != null) {
+          ulog.openRealtimeSearcher(); // This is needed due to LUCENE-7344.
+        }
         for (Query q : dbqList) {
           writer.deleteDocuments(new DeleteByQueryWrapper(q, core.getLatestSchema()));
         }
@@ -342,6 +339,10 @@ public class DirectUpdateHandler2 extends UpdateHandler implements SolrCoreState
       iw.decref();
     }
 
+  }
+
+  private Term getIdTerm(AddUpdateCommand cmd) {
+    return new Term(cmd.isBlock() ? "_root_" : idField.getName(), cmd.getIndexedId());
   }
 
   private void updateDeleteTrackers(DeleteUpdateCommand cmd) {
@@ -867,13 +868,22 @@ public class DirectUpdateHandler2 extends UpdateHandler implements SolrCoreState
       log.debug("updateDocValues({})", cmd);
       writer.updateDocValues(updateTerm, fieldsToUpdate.toArray(new Field[fieldsToUpdate.size()]));
     } else {
+      updateDocument(cmd, writer, updateTerm);
+    }
+  }
+
+  private void updateDocument(AddUpdateCommand cmd, IndexWriter writer, Term updateTerm) throws IOException {
+    if(cmd.isBlock()){
+      log.debug("updateDocuments({})", cmd);
+      writer.updateDocuments(updateTerm, cmd);
+    }else{
       Document luceneDocument = cmd.getLuceneDocument(false);
       log.debug("updateDocument({})", cmd);
       writer.updateDocument(updateTerm, luceneDocument);
     }
   }
 
-  
+
   /////////////////////////////////////////////////////////////////////
   // SolrInfoMBean stuff: Statistics and Module Info
   /////////////////////////////////////////////////////////////////////

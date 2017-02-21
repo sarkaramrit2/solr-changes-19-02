@@ -1296,6 +1296,25 @@ public abstract class SolrTestCaseJ4 extends LuceneTestCase {
     return sd;
   }
 
+  public SolrInputDocument sdocWithChildren(String id, String version) {
+    return sdocWithChildren(id, version, 2);
+  }
+
+  public SolrInputDocument sdocWithChildren(String id, String version, int childCount) {
+    SolrInputDocument doc = sdoc("id", id, "_version_", version);
+    for (int i = 1; i <= childCount; i++) {
+      doc.addChildDocument(sdoc("id", id + "_child" + i));
+    }
+    return doc;
+  }
+  public SolrInputDocument sdocWithChildren(Integer id, String version, int childCount) {
+    SolrInputDocument doc = sdoc("id", id, "_version_", version);
+    for (int i = 1; i <= childCount; i++) {
+      doc.addChildDocument(sdoc("id", (1000)*id + i));
+    }
+    return doc;
+  }
+
   public static List<SolrInputDocument> sdocs(SolrInputDocument... docs) {
     return Arrays.asList(docs);
   }
@@ -2473,5 +2492,9 @@ public abstract class SolrTestCaseJ4 extends LuceneTestCase {
 
   protected static void systemClearPropertySolrTestsMergePolicyFactory() {
     System.clearProperty(SYSTEM_PROPERTY_SOLR_TESTS_MERGEPOLICYFACTORY);
+  }
+  
+  protected <T> T pickRandom(T... options) {
+    return options[random().nextInt(options.length)];
   }
 }

@@ -21,6 +21,7 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.github.benmanes.caffeine.cache.*;
 import org.apache.lucene.util.LuceneTestCase;
 import org.junit.Test;
 
@@ -60,8 +61,9 @@ public class BlockCacheTest extends LuceneTestCase {
 
       byte[] testData = testData(random, blockSize, newData);
       long t1 = System.nanoTime();
-      blockCache.store(blockCacheKey, 0, testData, 0, blockSize);
+      boolean success = blockCache.store(blockCacheKey, 0, testData, 0, blockSize);
       storeTime += (System.nanoTime() - t1);
+      if (!success) continue;  // for now, updating existing blocks is not supported... see SOLR-10121
 
       long t3 = System.nanoTime();
       if (blockCache.fetch(blockCacheKey, buffer)) {
@@ -74,33 +76,6 @@ public class BlockCacheTest extends LuceneTestCase {
     System.out.println("Store         = " + (storeTime / (double) passes) / 1000000.0);
     System.out.println("Fetch         = " + (fetchTime / (double) passes) / 1000000.0);
     System.out.println("# of Elements = " + blockCache.getSize());
-  }
-
-  /**
-   * Verify checking of buffer size limits against the cached block size.
-   */
-  @Test
-  public void testLongBuffer() {
-    Random random = random();
-    int blockSize = BlockCache._32K;
-    int slabSize = blockSize * 1024;
-    long totalMemory = 2 * slabSize;
-
-    BlockCache blockCache = new BlockCache(new Metrics(), true, totalMemory, slabSize);
-    BlockCacheKey blockCacheKey = new BlockCacheKey();
-    blockCacheKey.setBlock(0);
-    blockCacheKey.setFile(0);
-    blockCacheKey.setPath("/");
-    byte[] newData = new byte[blockSize*3];
-    byte[] testData = testData(random, blockSize, newData);
-
-    assertTrue(blockCache.store(blockCacheKey, 0, testData, 0, blockSize));
-    assertTrue(blockCache.store(blockCacheKey, 0, testData, blockSize, blockSize));
-    assertTrue(blockCache.store(blockCacheKey, 0, testData, blockSize*2, blockSize));
-
-    assertTrue(blockCache.store(blockCacheKey, 1, testData, 0, blockSize - 1));
-    assertTrue(blockCache.store(blockCacheKey, 1, testData, blockSize, blockSize - 1));
-    assertTrue(blockCache.store(blockCacheKey, 1, testData, blockSize*2, blockSize - 1));
   }
 
   private static byte[] testData(Random random, int size, byte[] buf) {
@@ -123,22 +98,23 @@ public class BlockCacheTest extends LuceneTestCase {
   public void testBlockCacheConcurrent() throws Exception {
     Random rnd = random();
 
+    final int blocksInTest = 400;  // pick something bigger than 256, since that would lead to a slab size of 64 blocks and the bitset locks would consist of a single word.
+    final int blockSize = 64;
+    final int slabSize = blocksInTest * blockSize / 4;
+    final long totalMemory = 2 * slabSize;  // 2 slabs of memory, so only half of what is needed for all blocks
+
     /***
-    final int blocksInTest = 256;
+    final int blocksInTest = 16384;  // pick something bigger than 256, since that would lead to a slab size of 64 blocks and the bitset locks would consist of a single word.
     final int blockSize = 1024;
-    final int slabSize = blockSize * 128;
-    final long totalMemory = 2 * slabSize;
+    final int slabSize = blocksInTest * blockSize / 4;
+    final long totalMemory = 2 * slabSize;  // 2 slabs of memory, so only half of what is needed for all blocks
     ***/
 
-    final int blocksInTest = 16384;  // pick something that won't fit in memory, but is small enough to cause a medium hit rate.  16MB of blocks is double the total memory size of the cache.
-    final int blockSize = 1024;
-    final int slabSize = blockSize * 4096;
-    final long totalMemory = 2 * slabSize;  // should give us 2 slabs (8MB)
-
-    final int nThreads=2;
+    final int nThreads=64;
     final int nReads=1000000;
     final int readsPerThread=nReads/nThreads;
     final int readLastBlockOdds=10; // odds (1 in N) of the next block operation being on the same block as the previous operation... helps flush concurrency issues
+    final int showErrors=50; // show first 50 validation failures
 
     final BlockCache blockCache = new BlockCache(new Metrics(), true, totalMemory, slabSize, blockSize);
 
@@ -147,6 +123,7 @@ public class BlockCacheTest extends LuceneTestCase {
     final AtomicLong missesInCache = new AtomicLong();
     final AtomicLong storeFails = new AtomicLong();
     final AtomicLong lastBlock = new AtomicLong();
+    final AtomicLong validateFails = new AtomicLong(0);
 
     final int file = 0;
 
@@ -158,7 +135,7 @@ public class BlockCacheTest extends LuceneTestCase {
 
       threads[i] = new Thread() {
         Random r;
-        BlockCacheKey blockCacheKey = new BlockCacheKey();
+        BlockCacheKey blockCacheKey;
         byte[] buffer = new byte[blockSize];
 
         @Override
@@ -201,8 +178,9 @@ public class BlockCacheTest extends LuceneTestCase {
             for (int i = 0; i < len; i++) {
               long globalPos = globalOffset + i;
               if (buffer[i] != getByte(globalPos)) {
-                System.out.println("ERROR: read was " + "block=" + block + " blockOffset=" + blockOffset + " len=" + len + " globalPos=" + globalPos + " localReadOffset=" + i + " got=" + buffer[i] + " expected=" + getByte(globalPos));
                 failed.set(true);
+                if (validateFails.incrementAndGet() <= showErrors) System.out.println("ERROR: read was " + "block=" + block + " blockOffset=" + blockOffset + " len=" + len + " globalPos=" + globalPos + " localReadOffset=" + i + " got=" + buffer[i] + " expected=" + getByte(globalPos));
+                break;
               }
             }
           } else {
@@ -236,8 +214,124 @@ public class BlockCacheTest extends LuceneTestCase {
     System.out.println("Cache Hits = " + hitsInCache.get());
     System.out.println("Cache Misses = " + missesInCache.get());
     System.out.println("Cache Store Fails = " + storeFails.get());
+    System.out.println("Blocks with Errors = " + validateFails.get());
 
     assertFalse( failed.get() );
   }
+
+
+  static class Val {
+    long key;
+    AtomicBoolean live = new AtomicBoolean(true);
+  }
+
+  // Sanity test the underlying concurrent map that BlockCache is using, in the same way that we use it.
+  @Test
+  @AwaitsFix(bugUrl = "https://issues.apache.org/jira/browse/SOLR-10141")
+  public void testCacheConcurrent() throws Exception {
+    Random rnd = random();
+
+    final int blocksInTest = 400;
+    final int maxEntries = blocksInTest/2;
+
+    final int nThreads=64;
+    final int nReads=10000000;
+    final int readsPerThread=nReads/nThreads;
+    final int readLastBlockOdds=10; // odds (1 in N) of the next block operation being on the same block as the previous operation... helps flush concurrency issues
+    final boolean updateAnyway = true; // sometimes insert a new entry for the key even if one was found
+
+    final AtomicLong hits = new AtomicLong();
+    final AtomicLong removals = new AtomicLong();
+    final AtomicLong inserts = new AtomicLong();
+
+    RemovalListener<Long,Val> listener = (k, v, removalCause) -> {
+      assert v.key == k;
+      if (!v.live.compareAndSet(true, false)) {
+        throw new RuntimeException("listener called more than once! k=" + k + " v=" + v + " removalCause=" + removalCause);
+        // return;  // use this variant if listeners may be called more than once
+      }
+      removals.incrementAndGet();
+    };
+
+
+    com.github.benmanes.caffeine.cache.Cache<Long,Val> cache = Caffeine.newBuilder()
+        .removalListener(listener)
+        .maximumSize(maxEntries)
+        .executor(Runnable::run)
+        .build();
+
+    final AtomicBoolean failed = new AtomicBoolean(false);
+    final AtomicLong lastBlock = new AtomicLong();
+    final AtomicLong maxObservedSize = new AtomicLong();
+
+    Thread[] threads = new Thread[nThreads];
+    for (int i=0; i<threads.length; i++) {
+      final long seed = rnd.nextLong();
+
+      threads[i] = new Thread() {
+        Random r;
+        @Override
+        public void run() {
+          try {
+            r = new Random(seed);
+            test(readsPerThread);
+          } catch (Throwable e) {
+            failed.set(true);
+            e.printStackTrace();
+          }
+        }
+
+        public void test(int iter) {
+          for (int i=0; i<iter; i++) {
+            test();
+          }
+        }
+
+        public void test() {
+          long block = r.nextInt(blocksInTest);
+          if (readLastBlockOdds > 0 && r.nextInt(readLastBlockOdds) == 0) block = lastBlock.get();  // some percent of the time, try to read the last block another thread was just reading/writing
+          lastBlock.set(block);
+
+          Long k = block;
+          Val v = cache.getIfPresent(k);
+          if (v != null) {
+            hits.incrementAndGet();
+            assert k.equals(v.key);
+          }
+
+          if (v == null || updateAnyway && r.nextBoolean()) {
+            v = new Val();
+            v.key = k;
+            cache.put(k, v);
+            inserts.incrementAndGet();
+          }
+
+          long sz = cache.asMap().size();
+          if (sz > maxObservedSize.get()) maxObservedSize.set(sz);  // race condition here, but an estimate is OK
+
+        }
+      };
+    }
+
+
+    for (Thread thread : threads) {
+      thread.start();
+    }
+
+    for (Thread thread : threads) {
+      thread.join();
+    }
+
+
+    // Thread.sleep(1000); // need to wait if executor is used for listener?
+    long cacheSize = cache.asMap().size();
+    System.out.println("Done! # of Elements = " + cacheSize + " inserts=" + inserts.get() + " removals=" + removals.get() + " hits=" + hits.get() +  " maxObservedSize=" + maxObservedSize);
+    assert inserts.get() - removals.get() == cacheSize;
+    assertFalse( failed.get() );
+  }
+
+
+
+
 
 }
